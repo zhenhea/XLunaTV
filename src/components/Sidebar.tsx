@@ -1,104 +1,141 @@
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 'use client';
 
-import { Cat, Clover, Film, History, Home, Search, Star, Trash2, Tv, X } from 'lucide-react';
+import { Cat, Clover, Film, Globe, Home, Menu, PlaySquare, Radio, Search, Star, Tv } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
-
-import { getCustomCategories } from '@/lib/config.client';
 import {
-  addSearchHistory,
-  clearSearchHistory,
-  deleteSearchHistory,
-  getSearchHistory,
-  subscribeToDataUpdates,
-} from '@/lib/db.client';
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useState,
+} from 'react';
 
-import { useNavigationLoading } from './NavigationLoadingProvider';
-import SearchSuggestions from './SearchSuggestions';
 import { useSite } from './SiteProvider';
-import SourceSelector from './SourceSelector';
-import { ThemeToggle } from './ThemeToggle';
-import { UserMenu } from './UserMenu';
 
-interface TopNavProps {
+interface SidebarContextType {
+  isCollapsed: boolean;
+}
+
+const SidebarContext = createContext<SidebarContextType>({
+  isCollapsed: false,
+});
+
+export const useSidebar = () => useContext(SidebarContext);
+
+// 可替换为你自己的 logo 图片
+const Logo = () => {
+  const { siteName } = useSite();
+  return (
+    <Link
+      href='/'
+      className='flex items-center justify-center h-16 select-none group'
+    >
+      <div className='relative'>
+        {/* 发光背景效果 */}
+        <div className='absolute inset-0 bg-gradient-to-r from-green-400 via-emerald-500 to-teal-500 opacity-0 group-hover:opacity-20 blur-xl transition-opacity duration-300 rounded-lg scale-110'></div>
+
+        <span className='relative text-2xl font-bold bg-gradient-to-r from-green-600 via-emerald-600 to-teal-600 dark:from-green-400 dark:via-emerald-400 dark:to-teal-400 bg-clip-text text-transparent tracking-tight transition-all duration-300 group-hover:scale-105 inline-block group-hover:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]'>
+          {siteName}
+        </span>
+      </div>
+    </Link>
+  );
+};
+
+interface SidebarProps {
+  onToggle?: (collapsed: boolean) => void;
   activePath?: string;
 }
 
-const TopNav = ({ activePath = '/' }: TopNavProps) => {
+// 在浏览器环境下通过全局变量缓存折叠状态，避免组件重新挂载时出现初始值闪烁
+declare global {
+  interface Window {
+    __sidebarCollapsed?: boolean;
+  }
+}
+
+const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { siteName } = useSite();
-  const { startLoading } = useNavigationLoading();
-
-  const [active, setActive] = useState(activePath);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // 搜索源选择器状态
-  const [searchSources, setSearchSources] = useState<string[]>([]);
-  const [openFilter, setOpenFilter] = useState<string | null>(null);
-
-  // 历史记录状态
-  const [searchHistory, setSearchHistory] = useState<string[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const historyButtonRef = useRef<HTMLButtonElement>(null);
-  const historyPopupRef = useRef<HTMLDivElement>(null);
-
-  // 检查是否启用简洁模式
-  const [simpleMode, setSimpleMode] = useState(false);
-  const [isClient, setIsClient] = useState(false);
-
-  useEffect(() => {
-    setIsClient(true);
-    if (typeof window !== 'undefined') {
-      const savedSimpleMode = localStorage.getItem('simpleMode');
-      if (savedSimpleMode !== null) {
-        setSimpleMode(JSON.parse(savedSimpleMode));
-      }
+  // 若同一次 SPA 会话中已经读取过折叠状态，则直接复用，避免闪烁
+  const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.__sidebarCollapsed === 'boolean'
+    ) {
+      return window.__sidebarCollapsed;
     }
+    return false; // 默认展开
+  });
 
-    // 加载搜索历史
-    getSearchHistory().then(setSearchHistory);
-    const unsubscribe = subscribeToDataUpdates('searchHistoryUpdated', setSearchHistory);
-    
-    return () => {
-      unsubscribe();
-    };
+  // 首次挂载时读取 localStorage，以便刷新后仍保持上次的折叠状态
+  useLayoutEffect(() => {
+    const saved = localStorage.getItem('sidebarCollapsed');
+    if (saved !== null) {
+      const val = JSON.parse(saved);
+      setIsCollapsed(val);
+      window.__sidebarCollapsed = val;
+    }
   }, []);
 
+  // 当折叠状态变化时，同步到 <html> data 属性，供首屏 CSS 使用
+  useLayoutEffect(() => {
+    if (typeof document !== 'undefined') {
+      if (isCollapsed) {
+        document.documentElement.dataset.sidebarCollapsed = 'true';
+      } else {
+        delete document.documentElement.dataset.sidebarCollapsed;
+      }
+    }
+  }, [isCollapsed]);
+
+  const [active, setActive] = useState(activePath);
+
   useEffect(() => {
+    // 优先使用传入的 activePath
     if (activePath) {
       setActive(activePath);
     } else {
-      const queryString = searchParams.toString();
-      const fullPath = queryString ? `${pathname}?${queryString}` : pathname;
+      // 否则使用当前路径
+      const getCurrentFullPath = () => {
+        const queryString = searchParams.toString();
+        return queryString ? `${pathname}?${queryString}` : pathname;
+      };
+      const fullPath = getCurrentFullPath();
       setActive(fullPath);
     }
   }, [activePath, pathname, searchParams]);
 
-  // 同步 URL 中的搜索查询和搜索源到搜索框
-  useEffect(() => {
-    if (pathname === '/search') {
-      const query = searchParams.get('q');
-      if (query) {
-        setSearchQuery(decodeURIComponent(query));
-      } else {
-        setSearchQuery('');
-      }
-      
-      const sources = searchParams.get('sources');
-      if (sources) {
-        setSearchSources(sources.split(','));
-      }
+  const handleToggle = useCallback(() => {
+    const newState = !isCollapsed;
+    setIsCollapsed(newState);
+    localStorage.setItem('sidebarCollapsed', JSON.stringify(newState));
+    if (typeof window !== 'undefined') {
+      window.__sidebarCollapsed = newState;
     }
-  }, [pathname, searchParams]);
+    onToggle?.(newState);
+  }, [isCollapsed, onToggle]);
+
+  const handleSearchClick = useCallback(() => {
+    router.push('/search');
+  }, [router]);
+
+  const contextValue = {
+    isCollapsed,
+  };
 
   const [menuItems, setMenuItems] = useState([
+    {
+      icon: Globe,
+      label: '源浏览器',
+      href: '/source-browser',
+    },
     {
       icon: Film,
       label: '电影',
@@ -110,6 +147,11 @@ const TopNav = ({ activePath = '/' }: TopNavProps) => {
       href: '/douban?type=tv',
     },
     {
+      icon: PlaySquare,
+      label: '短剧',
+      href: '/shortdrama',
+    },
+    {
       icon: Cat,
       label: '动漫',
       href: '/douban?type=anime',
@@ -119,302 +161,179 @@ const TopNav = ({ activePath = '/' }: TopNavProps) => {
       label: '综艺',
       href: '/douban?type=show',
     },
+    {
+      icon: Radio,
+      label: '直播',
+      href: '/live',
+    },
   ]);
 
   useEffect(() => {
-    getCustomCategories().then((categories) => {
-      if (categories.length > 0) {
-        setMenuItems((prevItems) => [
-          ...prevItems,
-          {
-            icon: Star,
-            label: '自定义',
-            href: '/douban?type=custom',
-          },
-        ]);
-      }
-    });
+    const runtimeConfig = (window as any).RUNTIME_CONFIG;
+    if (runtimeConfig?.CUSTOM_CATEGORIES?.length > 0) {
+      setMenuItems((prevItems) => [
+        ...prevItems,
+        {
+          icon: Star,
+          label: '自定义',
+          href: '/douban?type=custom',
+        },
+      ]);
+    }
   }, []);
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmedQuery = searchQuery.trim();
-    if (trimmedQuery) {
-      // 添加到搜索历史
-      addSearchHistory(trimmedQuery);
-      
-      // 如果不在搜索页面，触发加载动画
-      if (pathname !== '/search') {
-        startLoading();
-      }
-      
-      const params = new URLSearchParams();
-      params.set('q', trimmedQuery);
-      if (searchSources.length > 0) {
-        params.set('sources', searchSources.join(','));
-      }
-      router.push(`/search?${params.toString()}`);
-      setShowSuggestions(false);
-      setShowHistory(false);
-    }
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setSearchQuery(value);
-    setShowSuggestions(value.trim().length > 0);
-    setShowHistory(false); // 输入时关闭历史记录
-  };
-
-  const handleSuggestionSelect = (suggestion: string) => {
-    setSearchQuery(suggestion);
-    setShowSuggestions(false);
-    setShowHistory(false); // 选择建议时关闭历史记录
-    
-    // 添加到搜索历史
-    addSearchHistory(suggestion);
-    
-    // 如果不在搜索页面，触发加载动画
-    if (pathname !== '/search') {
-      startLoading();
-    }
-    
-    const params = new URLSearchParams();
-    params.set('q', suggestion);
-    if (searchSources.length > 0) {
-      params.set('sources', searchSources.join(','));
-    }
-    router.push(`/search?${params.toString()}`);
-  };
-
-  const handleInputFocus = () => {
-    if (searchQuery.trim().length > 0) {
-      setShowSuggestions(true);
-    }
-    setShowHistory(false); // 聚焦输入框时关闭历史记录
-  };
-
-  const clearSearch = () => {
-    setSearchQuery('');
-    setShowSuggestions(false);
-    searchInputRef.current?.focus();
-  };
-
-  const handleHistoryClick = (item: string) => {
-    setSearchQuery(item);
-    setShowHistory(false);
-    
-    // 添加到搜索历史（更新时间戳）
-    addSearchHistory(item);
-    
-    // 如果不在搜索页面，触发加载动画
-    if (pathname !== '/search') {
-      startLoading();
-    }
-    
-    const params = new URLSearchParams();
-    params.set('q', item);
-    if (searchSources.length > 0) {
-      params.set('sources', searchSources.join(','));
-    }
-    router.push(`/search?${params.toString()}`);
-  };
-
-  const handleDeleteHistory = async (item: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    await deleteSearchHistory(item);
-  };
-
-  const handleClearAllHistory = async () => {
-    await clearSearchHistory();
-    setShowHistory(false);
-  };
-
-  // 点击外部关闭历史弹窗
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        showHistory &&
-        historyPopupRef.current &&
-        historyButtonRef.current &&
-        !historyPopupRef.current.contains(event.target as Node) &&
-        !historyButtonRef.current.contains(event.target as Node)
-      ) {
-        setShowHistory(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showHistory]);
-
   return (
-    <header className='hidden md:block sticky top-0 z-50 w-full bg-white/80 backdrop-blur-xl border-b border-gray-200/50 shadow-sm dark:bg-gray-900/80 dark:border-gray-700/50'>
-      <div className='mx-auto px-6 h-16 flex items-center justify-between gap-6'>
-        {/* Logo */}
-        <Link
-          href='/'
-          className='flex items-center justify-center select-none hover:opacity-80 transition-opacity duration-200 flex-shrink-0'
-          onClick={() => {
-            if (active !== '/') {
-              startLoading();
-            }
+    <SidebarContext.Provider value={contextValue}>
+      {/* 在移动端隐藏侧边栏 */}
+      <div className='hidden md:flex'>
+        <aside
+          data-sidebar
+          className={`fixed top-0 left-0 h-screen bg-white/40 backdrop-blur-xl transition-all duration-300 border-r border-gray-200/50 z-10 shadow-lg dark:bg-gray-900/70 dark:border-gray-700/50 ${isCollapsed ? 'w-16' : 'w-64'
+            }`}
+          style={{
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
           }}
         >
-          <span className='text-2xl font-bold text-green-600 tracking-tight'>
-            {siteName}
-          </span>
-        </Link>
+          {/* 装饰性背景光晕 */}
+          <div className='absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-green-400/5 via-blue-400/5 to-transparent pointer-events-none'></div>
+          <div className='absolute bottom-0 left-0 w-full h-48 bg-gradient-to-t from-purple-400/5 via-pink-400/5 to-transparent pointer-events-none'></div>
 
-        {/* 导航菜单 */}
-        <nav className='flex items-center gap-1 flex-shrink-0'>
-        <Link
-          href='/'
-          onClick={() => {
-            if (active !== '/') {
-              startLoading();
-            }
-            setActive('/');
-          }}
-          data-active={active === '/'}
-          className='group flex items-center gap-2 px-4 py-2 rounded-lg text-gray-700 hover:bg-gray-100/50 hover:text-green-600 data-[active=true]:bg-green-500/10 data-[active=true]:text-green-600 font-medium transition-colors duration-200 dark:text-gray-300 dark:hover:text-green-400 dark:hover:bg-gray-700/50 dark:data-[active=true]:bg-green-500/10 dark:data-[active=true]:text-green-400'
-        >
-          <Home className='h-4 w-4' />
-          <span>首页</span>
-        </Link>
-
-          {isClient && !simpleMode && menuItems.map((item) => {
-            const typeMatch = item.href.match(/type=([^&]+)/)?.[1];
-            const decodedActive = decodeURIComponent(active);
-            const decodedItemHref = decodeURIComponent(item.href);
-            const isActive =
-              decodedActive === decodedItemHref ||
-              (decodedActive.startsWith('/douban') &&
-                decodedActive.includes(`type=${typeMatch}`));
-            const Icon = item.icon;
-
-            return (
-              <Link
-                key={item.label}
-                href={item.href}
-                onClick={() => {
-                  if (!isActive) {
-                    startLoading();
-                  }
-                  setActive(item.href);
-                }}
-                data-active={isActive}
-                className='group flex items-center gap-2 px-4 py-2 rounded-lg text-gray-700 hover:bg-gray-100/50 hover:text-green-600 data-[active=true]:bg-green-500/10 data-[active=true]:text-green-600 font-medium transition-colors duration-200 dark:text-gray-300 dark:hover:text-green-400 dark:hover:bg-gray-700/50 dark:data-[active=true]:bg-green-500/10 dark:data-[active=true]:text-green-400'
-              >
-                <Icon className='h-4 w-4' />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* 搜索栏 */}
-        <div className='flex-1 max-w-md flex items-center'>
-          {/* 搜索源选择器 */}
-
-          {/* 搜索框 */}
-          <div className='relative flex-1'>
-            <form onSubmit={handleSearch} className='relative'>
-              <Search className='absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400 dark:text-gray-500' />
-              <input
-                ref={searchInputRef}
-                type='text'
-                value={searchQuery}
-                onChange={handleInputChange}
-                onFocus={handleInputFocus}
-                placeholder='搜索电影、电视剧...'
-                className='w-full h-10 rounded-lg bg-gray-100/80 py-2 pl-10 pr-20 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-400 focus:bg-white transition-all duration-200 border border-gray-200/50 border-l-0 dark:bg-gray-800 dark:text-gray-300 dark:placeholder-gray-500 dark:focus:bg-gray-700 dark:border-gray-700'
-              />
-              <div className='absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1'>
-                {searchQuery && (
-                  <button
-                    type='button'
-                    onClick={clearSearch}
-                    className='text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors'
-                  >
-                    <X className='h-4 w-4' />
-                  </button>
-                )}
-                {/* 历史记录按钮 */}
-                <button
-                  ref={historyButtonRef}
-                  type='button'
-                  onClick={() => setShowHistory(!showHistory)}
-                  className='text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors relative'
-                  title='搜索历史'
-                >
-                  <History className='h-4 w-4' />
-                  {searchHistory.length > 0 && (
-                    <span className='absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full'></span>
-                  )}
-                </button>
-              </div>
-              <SearchSuggestions
-                query={searchQuery}
-                isVisible={showSuggestions}
-                onSelect={handleSuggestionSelect}
-                onClose={() => setShowSuggestions(false)}
-              />
-            </form>
-
-            {/* 历史记录弹窗 */}
-            {showHistory && searchHistory.length > 0 && (
+          <div className='flex h-full flex-col relative z-10'>
+            {/* 顶部 Logo 区域 */}
+            <div className='relative h-16'>
               <div
-                ref={historyPopupRef}
-                className='absolute top-full right-0 mt-2 max-w-md w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-96 overflow-y-auto z-50'
+                className={`absolute inset-0 flex items-center justify-center transition-opacity duration-200 ${isCollapsed ? 'opacity-0' : 'opacity-100'
+                  }`}
               >
-                <div className='p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between'>
-                  <h3 className='text-sm font-semibold text-gray-700 dark:text-gray-300'>
-                    搜索历史
-                  </h3>
-                  <button
-                    onClick={handleClearAllHistory}
-                    className='text-xs text-gray-500 hover:text-red-500 dark:text-gray-400 dark:hover:text-red-500 transition-colors'
-                  >
-                    清空全部
-                  </button>
-                </div>
-                <div className='p-2'>
-                  {searchHistory.map((item, index) => (
-                    <div
-                      key={`history-${item}-${index}`}
-                      className='group flex items-center justify-between px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer'
-                      onClick={() => handleHistoryClick(item)}
-                    >
-                      <span className='text-sm text-gray-700 dark:text-gray-300 truncate flex-1'>
-                        {item}
-                      </span>
-                      <button
-                        onClick={(e) => handleDeleteHistory(item, e)}
-                        className='ml-2 text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-500 transition-colors'
-                        title='删除'
-                      >
-                        <Trash2 className='h-3 w-3' />
-                      </button>
-                    </div>
-                  ))}
+                <div className='w-[calc(100%-4rem)] flex justify-center'>
+                  {!isCollapsed && <Logo />}
                 </div>
               </div>
-            )}
-          </div>
-        </div>
+              <button
+                onClick={handleToggle}
+                className={`absolute top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 rounded-full text-gray-500 hover:text-gray-700 transition-all duration-300 z-10 dark:text-gray-400 dark:hover:text-gray-200 group/toggle ${isCollapsed ? 'left-1/2 -translate-x-1/2' : 'right-2'
+                  }`}
+              >
+                {/* 渐变边框效果 */}
+                <div className='absolute inset-0 rounded-full bg-gradient-to-r from-green-400 via-blue-400 to-purple-400 opacity-0 group-hover/toggle:opacity-100 transition-opacity duration-300 animate-pulse'></div>
+                <div className='absolute inset-[2px] rounded-full bg-white dark:bg-gray-900 group-hover/toggle:bg-gray-50 dark:group-hover/toggle:bg-gray-800 transition-colors duration-300'></div>
 
-        {/* 右侧按钮组 */}
-        <div className='flex items-center gap-2 flex-shrink-0'>
-          <ThemeToggle />
-          <UserMenu />
-        </div>
+                <Menu className='h-4 w-4 relative z-10 transition-transform duration-300 group-hover/toggle:rotate-180' />
+              </button>
+            </div>
+
+            {/* 首页和搜索导航 */}
+            <nav className='px-2 mt-4 space-y-1'>
+              <Link
+                href='/'
+                onClick={() => setActive('/')}
+                data-active={active === '/'}
+                className={`group relative flex items-center rounded-lg px-2 py-2 pl-4 text-gray-700 hover:bg-gradient-to-r hover:from-green-50 hover:to-emerald-50 hover:text-green-600 data-[active=true]:bg-gradient-to-r data-[active=true]:from-green-500/20 data-[active=true]:to-emerald-500/20 data-[active=true]:text-green-700 font-medium transition-all duration-200 min-h-[40px] dark:text-gray-300 dark:hover:from-green-500/10 dark:hover:to-emerald-500/10 dark:hover:text-green-400 dark:data-[active=true]:from-green-500/15 dark:data-[active=true]:to-emerald-500/15 dark:data-[active=true]:text-green-400 ${isCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
+                  } gap-3 justify-start hover:shadow-md hover:shadow-green-500/10 data-[active=true]:shadow-lg data-[active=true]:shadow-green-500/20`}
+              >
+                <div className='w-4 h-4 flex items-center justify-center relative z-10'>
+                  <Home className='h-4 w-4 text-gray-500 group-hover:text-green-600 data-[active=true]:text-green-700 dark:text-gray-400 dark:group-hover:text-green-400 dark:data-[active=true]:text-green-400 transition-all duration-200 group-hover:scale-110' />
+                </div>
+                {!isCollapsed && (
+                  <span className='whitespace-nowrap transition-opacity duration-200 opacity-100 relative z-10'>
+                    首页
+                  </span>
+                )}
+                {/* 激活状态的左侧边框指示器 */}
+                <div className='absolute left-0 top-1/2 -translate-y-1/2 w-1 h-0 bg-gradient-to-b from-green-500 to-emerald-500 rounded-r-full transition-all duration-200 data-[active=true]:h-8 opacity-0 data-[active=true]:opacity-100' data-active={active === '/'}></div>
+              </Link>
+              <Link
+                href='/search'
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleSearchClick();
+                  setActive('/search');
+                }}
+                data-active={active === '/search'}
+                className={`group relative flex items-center rounded-lg px-2 py-2 pl-4 text-gray-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-cyan-50 hover:text-blue-600 data-[active=true]:bg-gradient-to-r data-[active=true]:from-blue-500/20 data-[active=true]:to-cyan-500/20 data-[active=true]:text-blue-700 font-medium transition-all duration-200 min-h-[40px] dark:text-gray-300 dark:hover:from-blue-500/10 dark:hover:to-cyan-500/10 dark:hover:text-blue-400 dark:data-[active=true]:from-blue-500/15 dark:data-[active=true]:to-cyan-500/15 dark:data-[active=true]:text-blue-400 ${isCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
+                  } gap-3 justify-start hover:shadow-md hover:shadow-blue-500/10 data-[active=true]:shadow-lg data-[active=true]:shadow-blue-500/20`}
+              >
+                <div className='w-4 h-4 flex items-center justify-center relative z-10'>
+                  <Search className='h-4 w-4 text-gray-500 group-hover:text-blue-600 data-[active=true]:text-blue-700 dark:text-gray-400 dark:group-hover:text-blue-400 dark:data-[active=true]:text-blue-400 transition-all duration-200 group-hover:scale-110' />
+                </div>
+                {!isCollapsed && (
+                  <span className='whitespace-nowrap transition-opacity duration-200 opacity-100 relative z-10'>
+                    搜索
+                  </span>
+                )}
+                {/* 激活状态的左侧边框指示器 */}
+                <div className='absolute left-0 top-1/2 -translate-y-1/2 w-1 h-0 bg-gradient-to-b from-blue-500 to-cyan-500 rounded-r-full transition-all duration-200 data-[active=true]:h-8 opacity-0 data-[active=true]:opacity-100' data-active={active === '/search'}></div>
+              </Link>
+            </nav>
+
+            {/* 菜单项 */}
+            <div className='flex-1 overflow-y-auto px-2 pt-4'>
+              <div className='space-y-1'>
+                {menuItems.map((item, index) => {
+                  // 检查当前路径是否匹配这个菜单项
+                  const typeMatch = item.href.match(/type=([^&]+)/)?.[1];
+
+                  // 解码URL以进行正确的比较
+                  const decodedActive = decodeURIComponent(active);
+                  const decodedItemHref = decodeURIComponent(item.href);
+
+                  const isActive =
+                    decodedActive === decodedItemHref ||
+                    (decodedActive.startsWith('/douban') &&
+                      decodedActive.includes(`type=${typeMatch}`));
+                  const Icon = item.icon;
+
+                  // 为每个菜单项定义独特的渐变色主题
+                  const colorThemes = [
+                    { hover: 'hover:from-emerald-50 hover:to-green-50 dark:hover:from-emerald-500/10 dark:hover:to-green-500/10', active: 'data-[active=true]:from-emerald-500/20 data-[active=true]:to-green-500/20 dark:data-[active=true]:from-emerald-500/15 dark:data-[active=true]:to-green-500/15', text: 'hover:text-emerald-600 data-[active=true]:text-emerald-700 dark:hover:text-emerald-400 dark:data-[active=true]:text-emerald-400', icon: 'group-hover:text-emerald-600 data-[active=true]:text-emerald-700 dark:group-hover:text-emerald-400 dark:data-[active=true]:text-emerald-400', shadow: 'hover:shadow-emerald-500/10 data-[active=true]:shadow-emerald-500/20', border: 'from-emerald-500 to-green-500' }, // 源浏览器
+                    { hover: 'hover:from-red-50 hover:to-pink-50 dark:hover:from-red-500/10 dark:hover:to-pink-500/10', active: 'data-[active=true]:from-red-500/20 data-[active=true]:to-pink-500/20 dark:data-[active=true]:from-red-500/15 dark:data-[active=true]:to-pink-500/15', text: 'hover:text-red-600 data-[active=true]:text-red-700 dark:hover:text-red-400 dark:data-[active=true]:text-red-400', icon: 'group-hover:text-red-600 data-[active=true]:text-red-700 dark:group-hover:text-red-400 dark:data-[active=true]:text-red-400', shadow: 'hover:shadow-red-500/10 data-[active=true]:shadow-red-500/20', border: 'from-red-500 to-pink-500' }, // 电影
+                    { hover: 'hover:from-blue-50 hover:to-indigo-50 dark:hover:from-blue-500/10 dark:hover:to-indigo-500/10', active: 'data-[active=true]:from-blue-500/20 data-[active=true]:to-indigo-500/20 dark:data-[active=true]:from-blue-500/15 dark:data-[active=true]:to-indigo-500/15', text: 'hover:text-blue-600 data-[active=true]:text-blue-700 dark:hover:text-blue-400 dark:data-[active=true]:text-blue-400', icon: 'group-hover:text-blue-600 data-[active=true]:text-blue-700 dark:group-hover:text-blue-400 dark:data-[active=true]:text-blue-400', shadow: 'hover:shadow-blue-500/10 data-[active=true]:shadow-blue-500/20', border: 'from-blue-500 to-indigo-500' }, // 剧集
+                    { hover: 'hover:from-purple-50 hover:to-violet-50 dark:hover:from-purple-500/10 dark:hover:to-violet-500/10', active: 'data-[active=true]:from-purple-500/20 data-[active=true]:to-violet-500/20 dark:data-[active=true]:from-purple-500/15 dark:data-[active=true]:to-violet-500/15', text: 'hover:text-purple-600 data-[active=true]:text-purple-700 dark:hover:text-purple-400 dark:data-[active=true]:text-purple-400', icon: 'group-hover:text-purple-600 data-[active=true]:text-purple-700 dark:group-hover:text-purple-400 dark:data-[active=true]:text-purple-400', shadow: 'hover:shadow-purple-500/10 data-[active=true]:shadow-purple-500/20', border: 'from-purple-500 to-violet-500' }, // 短剧
+                    { hover: 'hover:from-pink-50 hover:to-rose-50 dark:hover:from-pink-500/10 dark:hover:to-rose-500/10', active: 'data-[active=true]:from-pink-500/20 data-[active=true]:to-rose-500/20 dark:data-[active=true]:from-pink-500/15 dark:data-[active=true]:to-rose-500/15', text: 'hover:text-pink-600 data-[active=true]:text-pink-700 dark:hover:text-pink-400 dark:data-[active=true]:text-pink-400', icon: 'group-hover:text-pink-600 data-[active=true]:text-pink-700 dark:group-hover:text-pink-400 dark:data-[active=true]:text-pink-400', shadow: 'hover:shadow-pink-500/10 data-[active=true]:shadow-pink-500/20', border: 'from-pink-500 to-rose-500' }, // 动漫
+                    { hover: 'hover:from-orange-50 hover:to-amber-50 dark:hover:from-orange-500/10 dark:hover:to-amber-500/10', active: 'data-[active=true]:from-orange-500/20 data-[active=true]:to-amber-500/20 dark:data-[active=true]:from-orange-500/15 dark:data-[active=true]:to-amber-500/15', text: 'hover:text-orange-600 data-[active=true]:text-orange-700 dark:hover:text-orange-400 dark:data-[active=true]:text-orange-400', icon: 'group-hover:text-orange-600 data-[active=true]:text-orange-700 dark:group-hover:text-orange-400 dark:data-[active=true]:text-orange-400', shadow: 'hover:shadow-orange-500/10 data-[active=true]:shadow-orange-500/20', border: 'from-orange-500 to-amber-500' }, // 综艺
+                    { hover: 'hover:from-teal-50 hover:to-cyan-50 dark:hover:from-teal-500/10 dark:hover:to-cyan-500/10', active: 'data-[active=true]:from-teal-500/20 data-[active=true]:to-cyan-500/20 dark:data-[active=true]:from-teal-500/15 dark:data-[active=true]:to-cyan-500/15', text: 'hover:text-teal-600 data-[active=true]:text-teal-700 dark:hover:text-teal-400 dark:data-[active=true]:text-teal-400', icon: 'group-hover:text-teal-600 data-[active=true]:text-teal-700 dark:group-hover:text-teal-400 dark:data-[active=true]:text-teal-400', shadow: 'hover:shadow-teal-500/10 data-[active=true]:shadow-teal-500/20', border: 'from-teal-500 to-cyan-500' }, // 直播
+                    { hover: 'hover:from-yellow-50 hover:to-amber-50 dark:hover:from-yellow-500/10 dark:hover:to-amber-500/10', active: 'data-[active=true]:from-yellow-500/20 data-[active=true]:to-amber-500/20 dark:data-[active=true]:from-yellow-500/15 dark:data-[active=true]:to-amber-500/15', text: 'hover:text-yellow-600 data-[active=true]:text-yellow-700 dark:hover:text-yellow-400 dark:data-[active=true]:text-yellow-400', icon: 'group-hover:text-yellow-600 data-[active=true]:text-yellow-700 dark:group-hover:text-yellow-400 dark:data-[active=true]:text-yellow-400', shadow: 'hover:shadow-yellow-500/10 data-[active=true]:shadow-yellow-500/20', border: 'from-yellow-500 to-amber-500' }, // 自定义
+                  ];
+
+                  const theme = colorThemes[index] || colorThemes[0];
+
+                  return (
+                    <Link
+                      key={item.label}
+                      href={item.href}
+                      onClick={() => setActive(item.href)}
+                      data-active={isActive}
+                      className={`group relative flex items-center rounded-lg px-2 py-2 pl-4 text-sm text-gray-700 hover:bg-gradient-to-r ${theme.hover} ${theme.active} ${theme.text} transition-all duration-200 min-h-[40px] dark:text-gray-300 ${isCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
+                        } gap-3 justify-start hover:shadow-md ${theme.shadow} animate-[slideInFromLeft_0.3s_ease-out] opacity-0`}
+                      style={{
+                        animation: `slideInFromLeft 0.3s ease-out ${index * 0.05}s forwards`,
+                      }}
+                    >
+                      <div className='w-4 h-4 flex items-center justify-center relative z-10'>
+                        <Icon className={`h-4 w-4 text-gray-500 ${theme.icon} dark:text-gray-400 transition-all duration-200 group-hover:scale-110 group-hover:rotate-12`} />
+                      </div>
+                      {!isCollapsed && (
+                        <span className='whitespace-nowrap transition-opacity duration-200 opacity-100 relative z-10'>
+                          {item.label}
+                        </span>
+                      )}
+                      {/* 激活状态的左侧边框指示器 */}
+                      <div className={`absolute left-0 top-1/2 -translate-y-1/2 w-1 h-0 bg-gradient-to-b ${theme.border} rounded-r-full transition-all duration-200 data-[active=true]:h-8 opacity-0 data-[active=true]:opacity-100`} data-active={isActive}></div>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </aside>
+        <div
+          className={`transition-all duration-300 sidebar-offset ${isCollapsed ? 'w-16' : 'w-64'
+            }`}
+        ></div>
       </div>
-    </header>
+    </SidebarContext.Provider>
   );
 };
 
-export default TopNav;
-
+export default Sidebar;
